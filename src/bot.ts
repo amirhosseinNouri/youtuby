@@ -1,23 +1,32 @@
 import { Telegraf, Markup } from "telegraf";
+import type { InputMediaPhoto } from "telegraf/types";
 import type { BotConfig, SearchResult } from "./types.js";
 import { SearchBackendError, type YouTubeSearcher } from "./youtube-search.js";
 import { SessionStore } from "./session-store.js";
 import { UserRateLimiter } from "./rate-limit.js";
 
+const TELEGRAM_CAPTION_LIMIT = 1024;
+const PAGE_SIZE = 3;
+
+type SearchSession = {
+  query: string;
+  results: SearchResult[];
+  offset: number;
+};
+
 function makeSessionId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-function compactText(input: string, maxLen = 80): string {
+function compactText(input: string, maxLen: number): string {
   if (input.length <= maxLen) {
     return input;
   }
-
   return `${input.slice(0, maxLen - 1)}…`;
 }
 
 function formatResultCaption(result: SearchResult, index: number): string {
-  const lines = [`${index + 1}. ${compactText(result.title, 90)}`];
+  const lines = [`${index + 1}. ${result.title}`];
 
   if (result.channel) {
     lines.push(`Channel: ${result.channel}`);
@@ -25,45 +34,58 @@ function formatResultCaption(result: SearchResult, index: number): string {
   if (result.duration) {
     lines.push(`Duration: ${result.duration}`);
   }
+  if (result.viewCountText) {
+    lines.push(`Views: ${result.viewCountText}`);
+  }
   if (result.publishedText) {
     lines.push(`Published: ${result.publishedText}`);
   }
+  if (result.description) {
+    lines.push("", result.description);
+  }
+  lines.push("", result.url);
 
-  return lines.join("\n");
+  return compactText(lines.join("\n"), TELEGRAM_CAPTION_LIMIT);
 }
 
-async function sendSearchResults(
+async function sendPage(
   chatId: number,
-  query: string,
-  results: SearchResult[],
+  session: SearchSession,
   bot: Telegraf,
-  sessionStore: SessionStore<SearchResult[]>
+  sessionId: string
 ): Promise<void> {
-  if (results.length === 0) {
-    await bot.telegram.sendMessage(chatId, `No results found for: ${query}`);
+  const slice = session.results.slice(session.offset, session.offset + PAGE_SIZE);
+
+  if (slice.length === 0) {
     return;
   }
 
-  const sessionId = makeSessionId();
-  sessionStore.set(sessionId, results);
+  const media: InputMediaPhoto[] = slice.map((result, i) => ({
+    type: "photo",
+    media: result.thumbnailUrl,
+    caption: formatResultCaption(result, session.offset + i)
+  }));
 
-  await bot.telegram.sendMessage(chatId, `Results for: ${query}\nTap one item to continue.`);
-
-  for (const [index, result] of results.entries()) {
-    try {
-      await bot.telegram.sendPhoto(chatId, result.thumbnailUrl, {
-        caption: formatResultCaption(result, index),
-        reply_markup: Markup.inlineKeyboard([
-          Markup.button.callback("Select", `pick:${sessionId}:${index}`)
-        ]).reply_markup
-      });
-    } catch {
-      await bot.telegram.sendMessage(chatId, formatResultCaption(result, index), {
-        reply_markup: Markup.inlineKeyboard([
-          Markup.button.callback("Select", `pick:${sessionId}:${index}`)
-        ]).reply_markup
-      });
+  try {
+    await bot.telegram.sendMediaGroup(chatId, media);
+  } catch {
+    for (const [i, result] of slice.entries()) {
+      const caption = formatResultCaption(result, session.offset + i);
+      try {
+        await bot.telegram.sendPhoto(chatId, result.thumbnailUrl, { caption });
+      } catch {
+        await bot.telegram.sendMessage(chatId, caption);
+      }
     }
+  }
+
+  const hasMore = session.offset + slice.length < session.results.length;
+  if (hasMore) {
+    await bot.telegram.sendMessage(chatId, "Want more results?", {
+      reply_markup: Markup.inlineKeyboard([
+        Markup.button.callback("More", `more:${sessionId}`)
+      ]).reply_markup
+    });
   }
 }
 
@@ -75,7 +97,7 @@ function extractQueryFromCommand(text: string): string {
 
 export function createBot(config: BotConfig, searcher: YouTubeSearcher): Telegraf {
   const bot = new Telegraf(config.botToken);
-  const sessionStore = new SessionStore<SearchResult[]>(config.sessionTtlSec * 1000);
+  const sessionStore = new SessionStore<SearchSession>(config.sessionTtlSec * 1000);
   const rateLimiter = new UserRateLimiter(
     config.rateLimitWindowSec * 1000,
     config.rateLimitMaxRequests
@@ -96,7 +118,24 @@ export function createBot(config: BotConfig, searcher: YouTubeSearcher): Telegra
 
     try {
       const response = await searcher.search(query, config.resultLimit);
-      await sendSearchResults(chatId, response.query, response.results, bot, sessionStore);
+
+      if (response.results.length === 0) {
+        await bot.telegram.sendMessage(chatId, `No results found for: ${query}`);
+        return;
+      }
+
+      const sessionId = makeSessionId();
+      const session: SearchSession = {
+        query: response.query,
+        results: response.results,
+        offset: 0
+      };
+      sessionStore.set(sessionId, session);
+
+      await bot.telegram.sendMessage(chatId, `Results for: ${response.query}`);
+      await sendPage(chatId, session, bot, sessionId);
+      session.offset += PAGE_SIZE;
+      sessionStore.set(sessionId, session);
     } catch (error) {
       if (error instanceof SearchBackendError) {
         console.error("Search backend failure", error.detail);
@@ -122,8 +161,8 @@ export function createBot(config: BotConfig, searcher: YouTubeSearcher): Telegra
     await ctx.reply(
       [
         "Send /search <query> or just type your query.",
-        "I will show YouTube video results with thumbnails.",
-        "Select one result and I will prepare a handoff to @MegaSaverBot."
+        "I will reply with 3 YouTube results at a time, with thumbnails and full metadata.",
+        "Tap More to fetch the next 3."
       ].join("\n")
     );
   });
@@ -153,32 +192,34 @@ export function createBot(config: BotConfig, searcher: YouTubeSearcher): Telegra
   bot.on("callback_query", async (ctx) => {
     const data = "data" in ctx.callbackQuery ? ctx.callbackQuery.data : "";
 
-    if (!data.startsWith("pick:")) {
+    if (!data.startsWith("more:")) {
       return;
     }
 
-    const [, sessionId, indexRaw] = data.split(":");
-    const index = Number(indexRaw);
-    const results = sessionStore.get(sessionId);
+    const [, sessionId] = data.split(":");
+    const session = sessionStore.get(sessionId);
 
-    if (!results || Number.isNaN(index) || index < 0 || index >= results.length) {
-      await ctx.answerCbQuery("This result expired. Please search again.", { show_alert: true });
+    if (!session) {
+      await ctx.answerCbQuery("This search expired. Please search again.", { show_alert: true });
       return;
     }
 
-    const selected = results[index];
+    if (session.offset >= session.results.length) {
+      await ctx.answerCbQuery("No more results.");
+      return;
+    }
 
-    await ctx.answerCbQuery("Selected");
-    await ctx.reply(
-      [
-        `Selected: ${selected.title}`,
-        "Open MegaSaver and send this URL:",
-        selected.url
-      ].join("\n"),
-      Markup.inlineKeyboard([
-        Markup.button.url("Open @MegaSaverBot", "https://t.me/MegaSaverBot")
-      ])
-    );
+    await ctx.answerCbQuery();
+
+    try {
+      await ctx.editMessageReplyMarkup(undefined);
+    } catch {
+      // Ignore if the message can't be edited.
+    }
+
+    await sendPage(ctx.chat!.id, session, bot, sessionId);
+    session.offset += PAGE_SIZE;
+    sessionStore.set(sessionId, session);
   });
 
   return bot;

@@ -43,7 +43,7 @@ describe("parseYtInitialData", () => {
     expect(output.results).toHaveLength(1);
     expect(output.results[0].id).toBe("abc123");
     expect(output.results[0].url).toBe("https://www.youtube.com/watch?v=abc123");
-    expect(output.results[0].thumbnailUrl).toBe("https://img.example/small.jpg");
+    expect(output.results[0].thumbnailUrl).toBe("https://i.ytimg.com/vi/abc123/hqdefault.jpg");
     expect(output.results[0].duration).toBe("2:05");
     expect(output.results[0].channel).toBe("CatTV");
     expect(output.results[0].publishedText).toBe("2 weeks ago");
@@ -98,6 +98,6 @@ describe("parseYtInitialData", () => {
 
     const output = parseYtInitialData("q", payload, 5);
     expect(output.results).toHaveLength(1);
-    expect(output.results[0].thumbnailUrl).toBe("https://i.ytimg.com/vi/xyz/default.jpg");
+    expect(output.results[0].thumbnailUrl).toBe("https://i.ytimg.com/vi/xyz/hqdefault.jpg");
   });
 });

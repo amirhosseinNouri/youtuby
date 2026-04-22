@@ -11,8 +11,6 @@ export class SearchBackendError extends Error {
   }
 }
 
-type YtThumbnail = { url?: unknown; width?: unknown; height?: unknown };
-
 type YtTextNode = {
   runs?: Array<{ text?: unknown }>;
   simpleText?: unknown;
@@ -25,7 +23,10 @@ type YtVideoRenderer = {
   ownerText?: YtTextNode;
   lengthText?: YtTextNode;
   publishedTimeText?: YtTextNode;
-  thumbnail?: { thumbnails?: unknown };
+  viewCountText?: YtTextNode;
+  shortViewCountText?: YtTextNode;
+  descriptionSnippet?: YtTextNode;
+  detailedMetadataSnippets?: Array<{ snippetText?: YtTextNode }>;
 };
 
 function firstText(node: YtTextNode | undefined): string | undefined {
@@ -51,21 +52,6 @@ function firstText(node: YtTextNode | undefined): string | undefined {
   }
 
   return undefined;
-}
-
-function pickSmallestThumbnail(thumbs: YtThumbnail[]): string | undefined {
-  const valid = thumbs
-    .map((thumb) => {
-      if (typeof thumb.url !== "string" || thumb.url.length === 0) {
-        return undefined;
-      }
-      const width = typeof thumb.width === "number" ? thumb.width : Number.MAX_SAFE_INTEGER;
-      return { url: thumb.url, width };
-    })
-    .filter((thumb): thumb is { url: string; width: number } => Boolean(thumb));
-
-  valid.sort((a, b) => a.width - b.width);
-  return valid[0]?.url;
 }
 
 function collectVideoRenderers(root: unknown): YtVideoRenderer[] {
@@ -126,15 +112,15 @@ export function parseYtInitialData(
       continue;
     }
 
-    const thumbnails = Array.isArray(v.thumbnail?.thumbnails)
-      ? (v.thumbnail!.thumbnails as YtThumbnail[])
-      : [];
-    const thumbnailUrl =
-      pickSmallestThumbnail(thumbnails) ?? `https://i.ytimg.com/vi/${v.videoId}/default.jpg`;
+    const thumbnailUrl = `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
 
     const channel = firstText(v.longBylineText) ?? firstText(v.ownerText);
     const duration = firstText(v.lengthText);
     const publishedText = firstText(v.publishedTimeText);
+    const viewCountText = firstText(v.viewCountText) ?? firstText(v.shortViewCountText);
+    const description =
+      firstText(v.descriptionSnippet) ??
+      firstText(v.detailedMetadataSnippets?.[0]?.snippetText);
 
     seenIds.add(v.videoId);
     results.push({
@@ -144,7 +130,9 @@ export function parseYtInitialData(
       thumbnailUrl,
       duration,
       channel,
-      publishedText
+      publishedText,
+      viewCountText,
+      description
     });
 
     if (results.length >= limit) {

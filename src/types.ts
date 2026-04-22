@@ -6,6 +6,8 @@ export type SearchResult = {
   duration?: string;
   channel?: string;
   publishedText?: string;
+  viewCountText?: string;
+  description?: string;
 };
 
 export type SearchResponse = {
