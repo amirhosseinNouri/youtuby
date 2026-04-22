@@ -16,9 +16,9 @@ Telegram bot to browse YouTube search results through Invidious and hand off sel
 ## Setup
 
 1. Copy `.env.example` to `.env`
-2. Fill in `BOT_TOKEN` and `INVIDIOUS_BASE_URL`
-   - Optional: set `INVIDIOUS_BASE_URLS` as comma-separated fallbacks
-     (example: `https://inv.nadeko.net,https://invidious.privacyredirect.com`)
+2. Fill in `BOT_TOKEN`
+   - `INVIDIOUS_BASE_URL` defaults to `https://inv.nadeko.net`
+   - `INVIDIOUS_BASE_URLS` defaults to your configured Onion/I2P/Yggdrasil fallback list
 3. Install dependencies:
 
 ```bash

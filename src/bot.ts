@@ -92,6 +92,8 @@ export function createBot(config: BotConfig): Telegraf {
       return;
     }
 
+    const searchingMessage = await bot.telegram.sendMessage(chatId, "Searching...");
+
     try {
       const response = await searchYouTube(
         query,
@@ -113,6 +115,12 @@ export function createBot(config: BotConfig): Telegraf {
 
       console.error("Search error", error);
       await bot.telegram.sendMessage(chatId, "Search failed. Please try again in a bit.");
+    } finally {
+      try {
+        await bot.telegram.deleteMessage(chatId, searchingMessage.message_id);
+      } catch {
+        // Ignore if message was already removed or can't be deleted.
+      }
     }
   }
 
