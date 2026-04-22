@@ -2,26 +2,31 @@ import { describe, expect, test } from "bun:test";
 import { parseConfig } from "../src/config.js";
 
 describe("parseConfig", () => {
-  test("applies defaults and trims trailing slash", () => {
-    const config = parseConfig({
-      BOT_TOKEN: "token",
-      INVIDIOUS_BASE_URL: "https://yewtu.be/"
-    });
-
-    expect(config.resultLimit).toBe(10);
-    expect(config.invidiousBaseUrl).toBe("https://yewtu.be");
-  });
-
-  test("uses built-in invidious fallback defaults", () => {
+  test("applies defaults", () => {
     const config = parseConfig({
       BOT_TOKEN: "token"
     });
 
-    expect(config.invidiousBaseUrl).toBe("https://inv.nadeko.net");
-    expect(config.invidiousBaseUrls.length).toBeGreaterThan(1);
+    expect(config.botToken).toBe("token");
+    expect(config.resultLimit).toBe(10);
+    expect(config.requestTimeoutMs).toBe(20000);
+    expect(config.sessionTtlSec).toBe(600);
+    expect(config.rateLimitWindowSec).toBe(60);
+    expect(config.rateLimitMaxRequests).toBe(6);
+  });
+
+  test("coerces numeric env values", () => {
+    const config = parseConfig({
+      BOT_TOKEN: "token",
+      RESULT_LIMIT: "5",
+      REQUEST_TIMEOUT_MS: "15000"
+    });
+
+    expect(config.resultLimit).toBe(5);
+    expect(config.requestTimeoutMs).toBe(15000);
   });
 
   test("throws when required values are missing", () => {
-    expect(() => parseConfig({ INVIDIOUS_BASE_URL: "https://yewtu.be" })).toThrow();
+    expect(() => parseConfig({})).toThrow();
   });
 });

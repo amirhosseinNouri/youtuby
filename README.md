@@ -1,6 +1,6 @@
 # Youtuby
 
-Telegram bot to browse YouTube search results through Invidious and hand off selected URLs to `@MegaSaverBot`.
+Telegram bot that searches YouTube through a headless Chromium (Playwright) and hands off selected URLs to `@MegaSaverBot`.
 
 ## Features
 
@@ -11,18 +11,21 @@ Telegram bot to browse YouTube search results through Invidious and hand off sel
 - On selection, sends a button to open `@MegaSaverBot` and includes the selected YouTube URL
 - In-memory TTL session storage
 - Basic per-user rate limiting
-- Automatic fallback across multiple Invidious instances
+- Results fetched via a headless Chromium reading `ytInitialData` from the YouTube results page
 
 ## Setup
 
-1. Copy `.env.example` to `.env`
-2. Fill in `BOT_TOKEN`
-   - `INVIDIOUS_BASE_URL` defaults to `https://inv.nadeko.net`
-   - `INVIDIOUS_BASE_URLS` defaults to your configured Onion/I2P/Yggdrasil fallback list
-3. Install dependencies:
+1. Copy `.env.example` to `.env` and fill in `BOT_TOKEN`
+2. Install dependencies:
 
 ```bash
 bun install
+```
+
+3. Install the Chromium binary used by Playwright (only needed once):
+
+```bash
+bunx playwright install chromium
 ```
 
 4. Run in dev:
@@ -40,6 +43,8 @@ bun run dev
 - `bun run lint`
 
 ## Docker Compose
+
+The `Dockerfile` installs Chromium and all required system libraries automatically via `playwright install --with-deps chromium`.
 
 1. Create `.env` from `.env.example`
 2. Build and run:

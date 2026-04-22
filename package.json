@@ -1,7 +1,7 @@
 {
   "name": "youtuby",
   "version": "1.0.0",
-  "description": "Telegram YouTube browser bot using Invidious",
+  "description": "Telegram YouTube browser bot using a headless Chromium",
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
@@ -14,13 +14,13 @@
     "telegram",
     "bot",
     "youtube",
-    "invidious"
+    "playwright"
   ],
   "author": "Amirhossein Nouri",
   "license": "ISC",
   "dependencies": {
-    "axios": "^1.15.2",
     "dotenv": "^17.4.2",
+    "playwright": "^1.48.0",
     "telegraf": "^4.16.3",
     "zod": "^4.3.6"
   },

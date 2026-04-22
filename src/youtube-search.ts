@@ -1,51 +1,64 @@
-import axios from "axios";
+import { chromium, type Browser, type BrowserContext } from "playwright";
 import type { SearchResponse, SearchResult } from "./types.js";
-
-type InvidiousThumb = {
-  url?: unknown;
-  width?: unknown;
-  height?: unknown;
-};
-
-type InvidiousVideo = {
-  type?: unknown;
-  videoId?: unknown;
-  title?: unknown;
-  author?: unknown;
-  publishedText?: unknown;
-  lengthSeconds?: unknown;
-  videoThumbnails?: unknown;
-};
 
 export class SearchBackendError extends Error {
   constructor(
     message: string,
-    public readonly details: string[]
+    public readonly detail: string
   ) {
     super(message);
     this.name = "SearchBackendError";
   }
 }
 
-function secondsToText(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
+type YtThumbnail = { url?: unknown; width?: unknown; height?: unknown };
 
-  if (h > 0) {
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+type YtTextNode = {
+  runs?: Array<{ text?: unknown }>;
+  simpleText?: unknown;
+};
+
+type YtVideoRenderer = {
+  videoId?: unknown;
+  title?: YtTextNode;
+  longBylineText?: YtTextNode;
+  ownerText?: YtTextNode;
+  lengthText?: YtTextNode;
+  publishedTimeText?: YtTextNode;
+  thumbnail?: { thumbnails?: unknown };
+};
+
+function firstText(node: YtTextNode | undefined): string | undefined {
+  if (!node) {
+    return undefined;
   }
 
-  return `${m}:${String(s).padStart(2, "0")}`;
+  if (typeof node.simpleText === "string" && node.simpleText.length > 0) {
+    return node.simpleText;
+  }
+
+  if (Array.isArray(node.runs)) {
+    const parts: string[] = [];
+    for (const run of node.runs) {
+      if (run && typeof run.text === "string") {
+        parts.push(run.text);
+      }
+    }
+    const joined = parts.join("");
+    if (joined.length > 0) {
+      return joined;
+    }
+  }
+
+  return undefined;
 }
 
-function pickSmallestThumbnail(thumbnails: InvidiousThumb[]): string | undefined {
-  const valid = thumbnails
+function pickSmallestThumbnail(thumbs: YtThumbnail[]): string | undefined {
+  const valid = thumbs
     .map((thumb) => {
       if (typeof thumb.url !== "string" || thumb.url.length === 0) {
         return undefined;
       }
-
       const width = typeof thumb.width === "number" ? thumb.width : Number.MAX_SAFE_INTEGER;
       return { url: thumb.url, width };
     })
@@ -55,56 +68,83 @@ function pickSmallestThumbnail(thumbnails: InvidiousThumb[]): string | undefined
   return valid[0]?.url;
 }
 
-function toAbsoluteUrl(url: string, baseUrl: string): string {
-  try {
-    return new URL(url, `${baseUrl}/`).toString();
-  } catch {
-    return url;
-  }
+function collectVideoRenderers(root: unknown): YtVideoRenderer[] {
+  const out: YtVideoRenderer[] = [];
+  const seen = new WeakSet<object>();
+
+  const walk = (node: unknown): void => {
+    if (!node || typeof node !== "object") {
+      return;
+    }
+    if (seen.has(node as object)) {
+      return;
+    }
+    seen.add(node as object);
+
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        walk(item);
+      }
+      return;
+    }
+
+    const record = node as Record<string, unknown>;
+
+    const renderer = record.videoRenderer;
+    if (renderer && typeof renderer === "object") {
+      out.push(renderer as YtVideoRenderer);
+    }
+
+    for (const key of Object.keys(record)) {
+      walk(record[key]);
+    }
+  };
+
+  walk(root);
+  return out;
 }
 
-export function normalizeInvidiousResults(
+export function parseYtInitialData(
   query: string,
-  rawItems: InvidiousVideo[],
-  limit: number,
-  baseUrl: string
+  data: unknown,
+  limit: number
 ): SearchResponse {
+  const videos = collectVideoRenderers(data);
   const results: SearchResult[] = [];
+  const seenIds = new Set<string>();
 
-  for (const item of rawItems) {
-    if (item.type !== "video") {
+  for (const v of videos) {
+    if (typeof v.videoId !== "string" || v.videoId.length === 0) {
+      continue;
+    }
+    if (seenIds.has(v.videoId)) {
       continue;
     }
 
-    if (typeof item.videoId !== "string" || typeof item.title !== "string") {
+    const title = firstText(v.title);
+    if (!title) {
       continue;
     }
 
-    const thumbnails = Array.isArray(item.videoThumbnails)
-      ? (item.videoThumbnails as InvidiousThumb[])
+    const thumbnails = Array.isArray(v.thumbnail?.thumbnails)
+      ? (v.thumbnail!.thumbnails as YtThumbnail[])
       : [];
+    const thumbnailUrl =
+      pickSmallestThumbnail(thumbnails) ?? `https://i.ytimg.com/vi/${v.videoId}/default.jpg`;
 
-    const rawThumbnailUrl =
-      pickSmallestThumbnail(thumbnails) ?? `${baseUrl}/vi/${item.videoId}/default.jpg`;
-    const thumbnailUrl = toAbsoluteUrl(rawThumbnailUrl, baseUrl);
-    const lengthSeconds =
-      typeof item.lengthSeconds === "number"
-        ? item.lengthSeconds
-        : typeof item.lengthSeconds === "string"
-          ? Number(item.lengthSeconds)
-          : undefined;
+    const channel = firstText(v.longBylineText) ?? firstText(v.ownerText);
+    const duration = firstText(v.lengthText);
+    const publishedText = firstText(v.publishedTimeText);
 
+    seenIds.add(v.videoId);
     results.push({
-      id: item.videoId,
-      title: item.title,
-      url: `https://www.youtube.com/watch?v=${item.videoId}`,
+      id: v.videoId,
+      title,
+      url: `https://www.youtube.com/watch?v=${v.videoId}`,
       thumbnailUrl,
-      duration:
-        typeof lengthSeconds === "number" && Number.isFinite(lengthSeconds)
-          ? secondsToText(lengthSeconds)
-          : undefined,
-      channel: typeof item.author === "string" ? item.author : undefined,
-      publishedText: typeof item.publishedText === "string" ? item.publishedText : undefined
+      duration,
+      channel,
+      publishedText
     });
 
     if (results.length >= limit) {
@@ -115,43 +155,109 @@ export function normalizeInvidiousResults(
   return { query, results };
 }
 
-export async function searchYouTube(
-  query: string,
-  limit: number,
-  baseUrls: string[],
-  timeoutMs: number
-): Promise<SearchResponse> {
-  const errors: string[] = [];
+export class YouTubeSearcher {
+  private browser: Browser | null = null;
+  private initPromise: Promise<void> | null = null;
 
-  for (const baseUrl of baseUrls) {
-    const url = `${baseUrl}/api/v1/search`;
+  constructor(private readonly timeoutMs: number) {}
+
+  async init(): Promise<void> {
+    if (this.browser) {
+      return;
+    }
+
+    if (!this.initPromise) {
+      this.initPromise = chromium
+        .launch({
+          headless: true,
+          args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu"
+          ]
+        })
+        .then((browser) => {
+          this.browser = browser;
+        });
+    }
 
     try {
-      const response = await axios.get<InvidiousVideo[]>(url, {
-        params: {
-          q: query,
-          type: "video",
-          page: 1,
-          sort_by: "relevance"
-        },
-        timeout: timeoutMs,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; YoutubyBot/1.0)",
-          Accept: "application/json"
-        }
-      });
-
-      return normalizeInvidiousResults(query, response.data ?? [], limit, baseUrl);
-    } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status ?? "no_status";
-        const code = error.code ?? "no_code";
-        errors.push(`${baseUrl} -> status=${status}, code=${code}`);
-      } else {
-        errors.push(`${baseUrl} -> unknown_error`);
-      }
+      await this.initPromise;
+    } finally {
+      this.initPromise = null;
     }
   }
 
-  throw new SearchBackendError("All Invidious backends failed", errors);
+  async close(): Promise<void> {
+    const browser = this.browser;
+    this.browser = null;
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
+
+  async search(query: string, limit: number): Promise<SearchResponse> {
+    await this.init();
+    const browser = this.browser;
+    if (!browser) {
+      throw new SearchBackendError("Headless browser not initialized", "no-browser");
+    }
+
+    let context: BrowserContext | null = null;
+
+    try {
+      context = await browser.newContext({
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        locale: "en-US",
+        viewport: { width: 1280, height: 800 }
+      });
+
+      await context.addCookies([
+        { name: "CONSENT", value: "YES+1", domain: ".youtube.com", path: "/" },
+        { name: "SOCS", value: "CAI", domain: ".youtube.com", path: "/" }
+      ]);
+
+      const page = await context.newPage();
+      page.setDefaultTimeout(this.timeoutMs);
+      page.setDefaultNavigationTimeout(this.timeoutMs);
+
+      await page.route("**/*", (route) => {
+        const type = route.request().resourceType();
+        if (type === "image" || type === "media" || type === "font" || type === "stylesheet") {
+          route.abort().catch(() => {});
+          return;
+        }
+        route.continue().catch(() => {});
+      });
+
+      const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&hl=en&gl=US`;
+      await page.goto(url, { waitUntil: "domcontentloaded" });
+
+      const data = await page.evaluate(() => {
+        const w = window as unknown as { ytInitialData?: unknown };
+        return w.ytInitialData ?? null;
+      });
+
+      if (!data) {
+        throw new SearchBackendError(
+          "YouTube returned no search payload",
+          "ytInitialData missing"
+        );
+      }
+
+      return parseYtInitialData(query, data, limit);
+    } catch (error) {
+      if (error instanceof SearchBackendError) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new SearchBackendError("Headless browser search failed", message);
+    } finally {
+      if (context) {
+        await context.close().catch(() => {});
+      }
+    }
+  }
 }

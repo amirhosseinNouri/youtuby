@@ -1,6 +1,6 @@
 import { Telegraf, Markup } from "telegraf";
 import type { BotConfig, SearchResult } from "./types.js";
-import { SearchBackendError, searchYouTube } from "./youtube-search.js";
+import { SearchBackendError, type YouTubeSearcher } from "./youtube-search.js";
 import { SessionStore } from "./session-store.js";
 import { UserRateLimiter } from "./rate-limit.js";
 
@@ -73,7 +73,7 @@ function extractQueryFromCommand(text: string): string {
   return parts.join(" ").trim();
 }
 
-export function createBot(config: BotConfig): Telegraf {
+export function createBot(config: BotConfig, searcher: YouTubeSearcher): Telegraf {
   const bot = new Telegraf(config.botToken);
   const sessionStore = new SessionStore<SearchResult[]>(config.sessionTtlSec * 1000);
   const rateLimiter = new UserRateLimiter(
@@ -95,20 +95,14 @@ export function createBot(config: BotConfig): Telegraf {
     const searchingMessage = await bot.telegram.sendMessage(chatId, "Searching...");
 
     try {
-      const response = await searchYouTube(
-        query,
-        config.resultLimit,
-        config.invidiousBaseUrls,
-        config.requestTimeoutMs
-      );
-
+      const response = await searcher.search(query, config.resultLimit);
       await sendSearchResults(chatId, response.query, response.results, bot, sessionStore);
     } catch (error) {
       if (error instanceof SearchBackendError) {
-        console.error("Search backend failure", error.details.join(" | "));
+        console.error("Search backend failure", error.detail);
         await bot.telegram.sendMessage(
           chatId,
-          "Search backend is blocked right now (provider returned 403/failed). Please try again later."
+          "Search failed — the headless browser could not fetch results. Please try again in a bit."
         );
         return;
       }
