@@ -35,3 +35,24 @@ bun run dev
 - `bun run start`
 - `bun run test`
 - `bun run lint`
+
+## Docker Compose
+
+1. Create `.env` from `.env.example`
+2. Build and run:
+
+```bash
+docker compose up -d --build
+```
+
+3. View logs:
+
+```bash
+docker compose logs -f
+```
+
+4. Stop:
+
+```bash
+docker compose down
+```
