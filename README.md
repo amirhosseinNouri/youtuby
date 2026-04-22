@@ -11,11 +11,14 @@ Telegram bot to browse YouTube search results through Invidious and hand off sel
 - On selection, sends a button to open `@MegaSaverBot` and includes the selected YouTube URL
 - In-memory TTL session storage
 - Basic per-user rate limiting
+- Automatic fallback across multiple Invidious instances
 
 ## Setup
 
 1. Copy `.env.example` to `.env`
 2. Fill in `BOT_TOKEN` and `INVIDIOUS_BASE_URL`
+   - Optional: set `INVIDIOUS_BASE_URLS` as comma-separated fallbacks
+     (example: `https://inv.nadeko.net,https://invidious.privacyredirect.com`)
 3. Install dependencies:
 
 ```bash

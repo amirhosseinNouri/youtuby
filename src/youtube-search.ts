@@ -17,6 +17,16 @@ type InvidiousVideo = {
   videoThumbnails?: unknown;
 };
 
+export class SearchBackendError extends Error {
+  constructor(
+    message: string,
+    public readonly details: string[]
+  ) {
+    super(message);
+    this.name = "SearchBackendError";
+  }
+}
+
 function secondsToText(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -45,6 +55,14 @@ function pickSmallestThumbnail(thumbnails: InvidiousThumb[]): string | undefined
   return valid[0]?.url;
 }
 
+function toAbsoluteUrl(url: string, baseUrl: string): string {
+  try {
+    return new URL(url, `${baseUrl}/`).toString();
+  } catch {
+    return url;
+  }
+}
+
 export function normalizeInvidiousResults(
   query: string,
   rawItems: InvidiousVideo[],
@@ -66,7 +84,9 @@ export function normalizeInvidiousResults(
       ? (item.videoThumbnails as InvidiousThumb[])
       : [];
 
-    const thumbnailUrl = pickSmallestThumbnail(thumbnails) ?? `${baseUrl}/vi/${item.videoId}/default.jpg`;
+    const rawThumbnailUrl =
+      pickSmallestThumbnail(thumbnails) ?? `${baseUrl}/vi/${item.videoId}/default.jpg`;
+    const thumbnailUrl = toAbsoluteUrl(rawThumbnailUrl, baseUrl);
     const lengthSeconds =
       typeof item.lengthSeconds === "number"
         ? item.lengthSeconds
@@ -98,24 +118,40 @@ export function normalizeInvidiousResults(
 export async function searchYouTube(
   query: string,
   limit: number,
-  baseUrl: string,
+  baseUrls: string[],
   timeoutMs: number
 ): Promise<SearchResponse> {
-  const url = `${baseUrl}/api/v1/search`;
+  const errors: string[] = [];
 
-  const response = await axios.get<InvidiousVideo[]>(url, {
-    params: {
-      q: query,
-      type: "video",
-      page: 1,
-      sort_by: "relevance"
-    },
-    timeout: timeoutMs,
-    headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; YoutubyBot/1.0)",
-      Accept: "application/json"
+  for (const baseUrl of baseUrls) {
+    const url = `${baseUrl}/api/v1/search`;
+
+    try {
+      const response = await axios.get<InvidiousVideo[]>(url, {
+        params: {
+          q: query,
+          type: "video",
+          page: 1,
+          sort_by: "relevance"
+        },
+        timeout: timeoutMs,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; YoutubyBot/1.0)",
+          Accept: "application/json"
+        }
+      });
+
+      return normalizeInvidiousResults(query, response.data ?? [], limit, baseUrl);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status ?? "no_status";
+        const code = error.code ?? "no_code";
+        errors.push(`${baseUrl} -> status=${status}, code=${code}`);
+      } else {
+        errors.push(`${baseUrl} -> unknown_error`);
+      }
     }
-  });
+  }
 
-  return normalizeInvidiousResults(query, response.data ?? [], limit, baseUrl);
+  throw new SearchBackendError("All Invidious backends failed", errors);
 }

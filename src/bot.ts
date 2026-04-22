@@ -1,6 +1,6 @@
 import { Telegraf, Markup } from "telegraf";
 import type { BotConfig, SearchResult } from "./types.js";
-import { searchYouTube } from "./youtube-search.js";
+import { SearchBackendError, searchYouTube } from "./youtube-search.js";
 import { SessionStore } from "./session-store.js";
 import { UserRateLimiter } from "./rate-limit.js";
 
@@ -50,12 +50,20 @@ async function sendSearchResults(
   await bot.telegram.sendMessage(chatId, `Results for: ${query}\nTap one item to continue.`);
 
   for (const [index, result] of results.entries()) {
-    await bot.telegram.sendPhoto(chatId, result.thumbnailUrl, {
-      caption: formatResultCaption(result, index),
-      reply_markup: Markup.inlineKeyboard([
-        Markup.button.callback("Select", `pick:${sessionId}:${index}`)
-      ]).reply_markup
-    });
+    try {
+      await bot.telegram.sendPhoto(chatId, result.thumbnailUrl, {
+        caption: formatResultCaption(result, index),
+        reply_markup: Markup.inlineKeyboard([
+          Markup.button.callback("Select", `pick:${sessionId}:${index}`)
+        ]).reply_markup
+      });
+    } catch {
+      await bot.telegram.sendMessage(chatId, formatResultCaption(result, index), {
+        reply_markup: Markup.inlineKeyboard([
+          Markup.button.callback("Select", `pick:${sessionId}:${index}`)
+        ]).reply_markup
+      });
+    }
   }
 }
 
@@ -88,17 +96,23 @@ export function createBot(config: BotConfig): Telegraf {
       const response = await searchYouTube(
         query,
         config.resultLimit,
-        config.invidiousBaseUrl,
+        config.invidiousBaseUrls,
         config.requestTimeoutMs
       );
 
       await sendSearchResults(chatId, response.query, response.results, bot, sessionStore);
     } catch (error) {
+      if (error instanceof SearchBackendError) {
+        console.error("Search backend failure", error.details.join(" | "));
+        await bot.telegram.sendMessage(
+          chatId,
+          "Search backend is blocked right now (provider returned 403/failed). Please try again later."
+        );
+        return;
+      }
+
       console.error("Search error", error);
-      await bot.telegram.sendMessage(
-        chatId,
-        "Search is temporarily unavailable. Please try again in a bit."
-      );
+      await bot.telegram.sendMessage(chatId, "Search failed. Please try again in a bit.");
     }
   }
 

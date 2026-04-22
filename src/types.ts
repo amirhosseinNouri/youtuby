@@ -16,6 +16,7 @@ export type SearchResponse = {
 export type BotConfig = {
   botToken: string;
   invidiousBaseUrl: string;
+  invidiousBaseUrls: string[];
   resultLimit: number;
   requestTimeoutMs: number;
   sessionTtlSec: number;
