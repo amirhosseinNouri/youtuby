@@ -1,5 +1,4 @@
 import { Telegraf, Markup } from "telegraf";
-import type { InputMediaPhoto } from "telegraf/types";
 import type { BotConfig, SearchResult } from "./types.js";
 import { SearchBackendError, type YouTubeSearcher } from "./youtube-search.js";
 import { SessionStore } from "./session-store.js";
@@ -60,22 +59,12 @@ async function sendPage(
     return;
   }
 
-  const media: InputMediaPhoto[] = slice.map((result, i) => ({
-    type: "photo",
-    media: result.thumbnailUrl,
-    caption: formatResultCaption(result, session.offset + i)
-  }));
-
-  try {
-    await bot.telegram.sendMediaGroup(chatId, media);
-  } catch {
-    for (const [i, result] of slice.entries()) {
-      const caption = formatResultCaption(result, session.offset + i);
-      try {
-        await bot.telegram.sendPhoto(chatId, result.thumbnailUrl, { caption });
-      } catch {
-        await bot.telegram.sendMessage(chatId, caption);
-      }
+  for (const [i, result] of slice.entries()) {
+    const caption = formatResultCaption(result, session.offset + i);
+    try {
+      await bot.telegram.sendPhoto(chatId, result.thumbnailUrl, { caption });
+    } catch {
+      await bot.telegram.sendMessage(chatId, caption);
     }
   }
 
