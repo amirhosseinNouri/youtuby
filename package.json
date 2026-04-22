@@ -1,0 +1,32 @@
+{
+  "name": "youtuby",
+  "version": "1.0.0",
+  "description": "Telegram YouTube browser bot using Invidious",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "youtube",
+    "invidious"
+  ],
+  "author": "Amirhossein Nouri",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.15.2",
+    "dotenv": "^17.4.2",
+    "telegraf": "^4.16.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "bun-types": "^1.3.13",
+    "typescript": "^6.0.3"
+  }
+}
